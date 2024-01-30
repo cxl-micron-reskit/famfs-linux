@@ -11,6 +11,8 @@
 #ifndef FAMFS_INTERNAL_H
 #define FAMFS_INTERNAL_H
 
+extern const struct file_operations famfs_file_operations;
+
 struct famfs_mount_opts {
 	umode_t mode;
 };
