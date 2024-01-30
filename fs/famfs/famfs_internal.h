@@ -11,7 +11,21 @@
 #ifndef FAMFS_INTERNAL_H
 #define FAMFS_INTERNAL_H
 
+#include <linux/famfs_ioctl.h>
+
 extern const struct file_operations famfs_file_operations;
+
+/*
+ * Each famfs dax file has this hanging from its inode->i_private.
+ */
+struct famfs_file_meta {
+	bool                   error;
+	enum famfs_file_type   file_type;
+	size_t                 file_size;
+	enum famfs_extent_type tfs_extent_type;
+	size_t                 tfs_extent_ct;
+	struct famfs_extent    tfs_extents[];
+};
 
 struct famfs_mount_opts {
 	umode_t mode;
