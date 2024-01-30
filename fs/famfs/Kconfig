@@ -1,0 +1,10 @@
+
+
+config FAMFS
+       tristate "famfs: shared memory file system"
+       depends on DEV_DAX && FS_DAX && DEV_DAX_IOMAP
+       help
+	  Support for the famfs file system. Famfs is a dax file system that
+	  can support scale-out shared access to fabric-attached memory
+	  (e.g. CXL shared memory). Famfs is not a general purpose file system;
+	  it is an enabler for data sets in shared memory.

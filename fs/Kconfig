@@ -140,6 +140,8 @@ source "fs/autofs/Kconfig"
 source "fs/fuse/Kconfig"
 source "fs/overlayfs/Kconfig"
 
+source "fs/famfs/Kconfig"
+
 menu "Caches"
 
 source "fs/netfs/Kconfig"
