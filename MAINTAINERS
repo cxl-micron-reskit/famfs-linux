@@ -8188,6 +8188,7 @@ L:	linux-cxl@vger.kernel.org
 L:	linux-fsdevel@vger.kernel.org
 S:	Supported
 F:	Documentation/filesystems/famfs.rst
+F:	fs/famfs
 
 FANOTIFY
 M:	Jan Kara <jack@suse.cz>
