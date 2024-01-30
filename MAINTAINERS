@@ -8189,6 +8189,7 @@ L:	linux-fsdevel@vger.kernel.org
 S:	Supported
 F:	Documentation/filesystems/famfs.rst
 F:	fs/famfs
+F:	include/uapi/linux/famfs_ioctl.h
 
 FANOTIFY
 M:	Jan Kara <jack@suse.cz>
