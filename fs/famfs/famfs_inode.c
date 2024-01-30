@@ -28,6 +28,9 @@
 
 #define FAMFS_DEFAULT_MODE	0755
 
+static const struct inode_operations famfs_file_inode_operations;
+static const struct inode_operations famfs_dir_inode_operations;
+
 static struct inode *famfs_get_inode(struct super_block *sb,
 				     const struct inode *dir,
 				     umode_t mode, dev_t dev)
@@ -52,11 +55,11 @@ static struct inode *famfs_get_inode(struct super_block *sb,
 		init_special_inode(inode, mode, dev);
 		break;
 	case S_IFREG:
-		inode->i_op = NULL /* famfs_file_inode_operations */;
+		inode->i_op = &famfs_file_inode_operations;
 		inode->i_fop = NULL /* &famfs_file_operations */;
 		break;
 	case S_IFDIR:
-		inode->i_op = NULL /* famfs_dir_inode_operations */;
+		inode->i_op = &famfs_dir_inode_operations;
 		inode->i_fop = &simple_dir_operations;
 
 		/* Directory inodes start off with i_nlink == 2 (for ".") */
@@ -69,6 +72,110 @@ static struct inode *famfs_get_inode(struct super_block *sb,
 	}
 	return inode;
 }
+
+/***************************************************************************
+ * famfs inode_operations: these are currently pretty much boilerplate
+ */
+
+static const struct inode_operations famfs_file_inode_operations = {
+	/* All generic */
+	.setattr	   = simple_setattr,
+	.getattr	   = simple_getattr,
+};
+
+/*
+ * File creation. Allocate an inode, and we're done..
+ */
+static int
+famfs_mknod(struct mnt_idmap *idmap, struct inode *dir, struct dentry *dentry,
+	    umode_t mode, dev_t dev)
+{
+	struct famfs_fs_info *fsi = dir->i_sb->s_fs_info;
+	struct timespec64 tv;
+	struct inode *inode;
+
+	if (fsi->deverror)
+		return -ENODEV;
+
+	inode = famfs_get_inode(dir->i_sb, dir, mode, dev);
+	if (!inode)
+		return -ENOSPC;
+
+	d_instantiate(dentry, inode);
+	dget(dentry);	/* Extra count - pin the dentry in core */
+	tv = inode_set_ctime_current(inode);
+	inode_set_mtime_to_ts(inode, tv);
+	inode_set_atime_to_ts(inode, tv);
+
+	return 0;
+}
+
+static int famfs_mkdir(struct mnt_idmap *idmap, struct inode *dir,
+		       struct dentry *dentry, umode_t mode)
+{
+	struct famfs_fs_info *fsi = dir->i_sb->s_fs_info;
+	int rc;
+
+	if (fsi->deverror)
+		return -ENODEV;
+
+	rc = famfs_mknod(&nop_mnt_idmap, dir, dentry, mode | S_IFDIR, 0);
+	if (rc)
+		return rc;
+
+	inc_nlink(dir);
+
+	return 0;
+}
+
+static int famfs_create(struct mnt_idmap *idmap, struct inode *dir,
+			struct dentry *dentry, umode_t mode, bool excl)
+{
+	struct famfs_fs_info *fsi = dir->i_sb->s_fs_info;
+
+	if (fsi->deverror)
+		return -ENODEV;
+
+	return famfs_mknod(&nop_mnt_idmap, dir, dentry, mode | S_IFREG, 0);
+}
+
+static const struct inode_operations famfs_dir_inode_operations = {
+	.create		= famfs_create,
+	.lookup		= simple_lookup,
+	.link		= simple_link,
+	.unlink		= simple_unlink,
+	.mkdir		= famfs_mkdir,
+	.rmdir		= simple_rmdir,
+	.rename		= simple_rename,
+};
+
+/*****************************************************************************
+ * famfs super_operations
+ *
+ * TODO: implement a famfs_statfs() that shows size, free and available space,
+ * etc.
+ */
+
+/*
+ * famfs_show_options() - Display the mount options in /proc/mounts.
+ */
+static int famfs_show_options(struct seq_file *m, struct dentry *root)
+{
+	struct famfs_fs_info *fsi = root->d_sb->s_fs_info;
+
+	if (fsi->mount_opts.mode != FAMFS_DEFAULT_MODE)
+		seq_printf(m, ",mode=%o", fsi->mount_opts.mode);
+
+	return 0;
+}
+
+static const struct super_operations famfs_super_ops = {
+	.statfs		= simple_statfs,
+	.drop_inode	= generic_delete_inode,
+	.show_options	= famfs_show_options,
+};
+
+/*****************************************************************************/
 
 /*
  * famfs dax_operations  (for char dax)
@@ -103,7 +210,7 @@ famfs_fill_super(struct super_block *sb, struct fs_context *fc)
 	sb->s_blocksize		= PAGE_SIZE;
 	sb->s_blocksize_bits	= PAGE_SHIFT;
 	sb->s_magic		= FAMFS_SUPER_MAGIC;
-	sb->s_op		= NULL /* famfs_super_ops */;
+	sb->s_op		= &famfs_super_ops;
 	sb->s_time_gran		= 1;
 
 	return rc;
