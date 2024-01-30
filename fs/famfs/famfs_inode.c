@@ -213,8 +213,6 @@ static const struct dax_holder_operations famfs_dax_holder_ops = {
 static int
 famfs_fill_super(struct super_block *sb, struct fs_context *fc)
 {
-	//struct famfs_fs_info *fsi = sb->s_fs_info;
-	//struct inode *inode;
 	int rc = 0;
 
 	sb->s_maxbytes		= MAX_LFS_FILESIZE;
@@ -230,10 +228,6 @@ famfs_fill_super(struct super_block *sb, struct fs_context *fc)
 static int
 lookup_daxdev(const char *pathname, dev_t *devno)
 {
-	/* Don't actually open the dax device pointlessly */
-
-	// check dax device and pin
-
 	struct inode *inode;
 	struct path path;
 	int err;
