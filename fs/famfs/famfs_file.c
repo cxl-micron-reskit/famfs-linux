@@ -19,6 +19,100 @@
 #include <uapi/linux/famfs_ioctl.h>
 #include "famfs_internal.h"
 
+/***************************************************************************************
+ * filemap_fault counters
+ *
+ * The counters and the fault_count_enable file live at
+ * /sys/fs/famfs/
+ */
+struct famfs_fault_counters ffc;
+static int fault_count_enable;
+
+static ssize_t
+fault_count_enable_show(struct kobject *kobj,
+			struct kobj_attribute *attr,
+			char *buf)
+{
+	return sprintf(buf, "%d\n", fault_count_enable);
+}
+
+static ssize_t
+fault_count_enable_store(struct kobject        *kobj,
+			 struct kobj_attribute *attr,
+			 const char            *buf,
+			 size_t                 count)
+{
+	int value;
+	int rc;
+
+	rc = sscanf(buf, "%d", &value);
+	if (rc != 1)
+		return 0;
+
+	if (value > 0) /* clear fault counters when enabling, but not when disabling */
+		famfs_clear_fault_counters(&ffc);
+
+	fault_count_enable = value;
+	return count;
+}
+
+/* Individual fault counters are read-only */
+static ssize_t
+fault_count_pte_show(struct kobject *kobj,
+		     struct kobj_attribute *attr,
+		     char *buf)
+{
+	return sprintf(buf, "%llu", famfs_pte_fault_ct(&ffc));
+}
+
+static ssize_t
+fault_count_pmd_show(struct kobject *kobj,
+		     struct kobj_attribute *attr,
+		     char *buf)
+{
+	return sprintf(buf, "%llu", famfs_pmd_fault_ct(&ffc));
+}
+
+static ssize_t
+fault_count_pud_show(struct kobject *kobj,
+		     struct kobj_attribute *attr,
+		     char *buf)
+{
+	return sprintf(buf, "%llu", famfs_pud_fault_ct(&ffc));
+}
+
+static struct kobj_attribute fault_count_enable_attribute = __ATTR(fault_count_enable,
+								   0660,
+								   fault_count_enable_show,
+								   fault_count_enable_store);
+static struct kobj_attribute fault_count_pte_attribute = __ATTR(pte_fault_ct,
+								0440,
+								fault_count_pte_show,
+								NULL);
+static struct kobj_attribute fault_count_pmd_attribute = __ATTR(pmd_fault_ct,
+								0440,
+								fault_count_pmd_show,
+								NULL);
+static struct kobj_attribute fault_count_pud_attribute = __ATTR(pud_fault_ct,
+								0440,
+								fault_count_pud_show,
+								NULL);
+
+
+static struct attribute *attrs[] = {
+	&fault_count_enable_attribute.attr,
+	&fault_count_pte_attribute.attr,
+	&fault_count_pmd_attribute.attr,
+	&fault_count_pud_attribute.attr,
+	NULL,
+};
+
+struct attribute_group famfs_attr_group = {
+	.attrs = attrs,
+};
+
+/* End fault counters */
+
 /**
  * famfs_map_meta_alloc() - Allocate famfs file metadata
  * @mapp:       Pointer to an mcache_map_meta pointer
@@ -524,6 +618,9 @@ __famfs_filemap_fault(
 
 	if (IS_DAX(inode)) {
 		pfn_t pfn;
+
+		if (fault_count_enable)
+			famfs_inc_fault_counter_by_order(&ffc, pe_size);
 
 		ret = dax_iomap_fault(vmf, pe_size, &pfn, NULL, &famfs_iomap_ops);
 		if (ret & VM_FAULT_NEEDDSYNC)
