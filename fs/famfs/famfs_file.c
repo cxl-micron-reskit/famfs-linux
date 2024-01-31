@@ -20,6 +20,142 @@
 #include "famfs_internal.h"
 
 /*********************************************************************
+ * file_operations
+ */
+
+/* Reject I/O to files that aren't in a valid state */
+static ssize_t
+famfs_file_invalid(struct inode *inode)
+{
+	size_t i_size       = i_size_read(inode);
+	struct famfs_file_meta *meta = inode->i_private;
+
+	if (!meta) {
+		pr_err("%s: un-initialized famfs file\n", __func__);
+		return -EIO;
+	}
+	if (i_size != meta->file_size) {
+		pr_err("%s: something changed the size from  %ld to %ld\n",
+		       __func__, meta->file_size, i_size);
+		meta->error = 1;
+		return -ENXIO;
+	}
+	if (!IS_DAX(inode)) {
+		pr_err("%s: inode %llx IS_DAX is false\n", __func__, (u64)inode);
+		meta->error = 1;
+		return -ENXIO;
+	}
+	if (meta->error) {
+		pr_err("%s: previously detected metadata errors\n", __func__);
+		meta->error = 1;
+		return -EIO;
+	}
+	return 0;
+}
+
+static ssize_t
+famfs_dax_read_iter(
+	struct kiocb		*iocb,
+	struct iov_iter		*to)
+{
+	struct inode *inode = iocb->ki_filp->f_mapping->host;
+	size_t i_size       = i_size_read(inode);
+	size_t count        = iov_iter_count(to);
+	size_t max_count;
+	ssize_t rc;
+
+	rc = famfs_file_invalid(inode);
+	if (rc)
+		return rc;
+
+	max_count = max_t(size_t, 0, i_size - iocb->ki_pos);
+
+	if (count > max_count)
+		iov_iter_truncate(to, max_count);
+
+	if (!iov_iter_count(to))
+		return 0;
+
+	rc = dax_iomap_rw(iocb, to, &famfs_iomap_ops);
+
+	file_accessed(iocb->ki_filp);
+	return rc;
+}
+
+/**
+ * famfs_write_iter()
+ *
+ * We need our own write-iter in order to prevent append
+ */
+static ssize_t
+famfs_dax_write_iter(
+	struct kiocb    *iocb,
+	struct iov_iter *from)
+{
+	struct inode *inode = iocb->ki_filp->f_mapping->host;
+	size_t i_size       = i_size_read(inode);
+	size_t count        = iov_iter_count(from);
+	size_t max_count;
+	ssize_t rc;
+
+	rc = famfs_file_invalid(inode);
+	if (rc)
+		return rc;
+
+	/* Starting offset of write is: iocb->ki_pos
+	 * length is iov_iter_count(from)
+	 */
+	max_count = max_t(size_t, 0, i_size - iocb->ki_pos);
+
+	/* If write would go past EOF, truncate it to end at EOF since famfs does not
+	 * alloc-on-write
+	 */
+	if (count > max_count)
+		iov_iter_truncate(from, max_count);
+
+	if (!iov_iter_count(from))
+		return 0;
+
+	return dax_iomap_rw(iocb, from, &famfs_iomap_ops);
+}
+
+static int
+famfs_file_mmap(
+	struct file		*file,
+	struct vm_area_struct	*vma)
+{
+	struct inode		*inode = file_inode(file);
+	ssize_t rc;
+
+	rc = famfs_file_invalid(inode);
+	if (rc)
+		return (int)rc;
+
+	file_accessed(file);
+	vma->vm_ops = &famfs_file_vm_ops;
+	vm_flags_set(vma, VM_HUGEPAGE);
+	return 0;
+}
+
+const struct file_operations famfs_file_operations = {
+	.owner             = THIS_MODULE,
+
+	/* Custom famfs operations */
+	.write_iter	   = famfs_dax_write_iter,
+	.read_iter	   = famfs_dax_read_iter,
+	.mmap		   = famfs_file_mmap,
+
+	/* Force PMD alignment for mmap */
+	.get_unmapped_area = thp_get_unmapped_area,
+
+	/* Generic Operations */
+	.fsync		   = noop_fsync,
+	.splice_read	   = filemap_splice_read,
+	.splice_write	   = iter_file_splice_write,
+	.llseek		   = generic_file_llseek,
+};
+
+/*********************************************************************
  * iomap_operations
  *
  * This stuff uses the iomap (dax-related) helpers to resolve file offsets to
