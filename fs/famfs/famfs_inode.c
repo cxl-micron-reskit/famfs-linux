@@ -68,5 +68,88 @@ static const struct super_operations famfs_ops = {
 	.show_options	= famfs_show_options,
 };
 
+/***************************************************************************************
+ * dax_holder_operations for block dax
+ */
+
+static int
+famfs_blk_dax_notify_failure(
+	struct dax_device	*dax_devp,
+	u64			offset,
+	u64			len,
+	int			mf_flags)
+{
+
+	pr_err("%s: dax_devp %llx offset %llx len %lld mf_flags %x\n",
+	       __func__, (u64)dax_devp, (u64)offset, (u64)len, mf_flags);
+	return -EOPNOTSUPP;
+}
+
+const struct dax_holder_operations famfs_blk_dax_holder_ops = {
+	.notify_failure		= famfs_blk_dax_notify_failure,
+};
+
+static int
+famfs_open_char_device(
+	struct super_block *sb,
+	struct fs_context  *fc)
+{
+	pr_err("%s: Root device is %s, but your kernel does not support famfs on /dev/dax\n",
+	       __func__, fc->source);
+	return -ENODEV;
+}
+
+/**
+ * famfs_open_device()
+ *
+ * Open the memory device. If it looks like /dev/dax, call famfs_open_char_device().
+ * Otherwise try to open it as a block/pmem device.
+ */
+static int
+famfs_open_device(
+	struct super_block *sb,
+	struct fs_context  *fc)
+{
+	struct famfs_fs_info *fsi = sb->s_fs_info;
+	struct dax_device    *dax_devp;
+	u64 start_off = 0;
+	struct bdev_handle   *handlep;
+
+	if (fsi->dax_devp) {
+		pr_err("%s: already mounted\n", __func__);
+		return -EALREADY;
+	}
+
+	if (strstr(fc->source, "/dev/dax")) /* There is probably a better way to check this */
+		return famfs_open_char_device(sb, fc);
+
+	if (!strstr(fc->source, "/dev/pmem")) { /* There is probably a better way to check this */
+		pr_err("%s: primary backing dev (%s) is not pmem\n",
+		       __func__, fc->source);
+		return -EINVAL;
+	}
+
+	handlep = bdev_open_by_path(fc->source, FAMFS_BLKDEV_MODE, fsi, &fs_holder_ops);
+	if (IS_ERR(handlep->bdev)) {
+		pr_err("%s: failed blkdev_get_by_path(%s)\n", __func__, fc->source);
+		return PTR_ERR(handlep->bdev);
+	}
+
+	dax_devp = fs_dax_get_by_bdev(handlep->bdev, &start_off,
+				      fsi  /* holder */,
+				      &famfs_blk_dax_holder_ops);
+	if (IS_ERR(dax_devp)) {
+		pr_err("%s: unable to get daxdev from handlep->bdev\n", __func__);
+		bdev_release(handlep);
+		return -ENODEV;
+	}
+	fsi->bdev_handle = handlep;
+	fsi->dax_devp    = dax_devp;
+
+	pr_notice("%s: root device is block dax (%s)\n", __func__, fc->source);
+	return 0;
+}
+
+
 
 MODULE_LICENSE("GPL");
