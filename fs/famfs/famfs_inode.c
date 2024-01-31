@@ -41,7 +41,7 @@ static const struct super_operations famfs_ops;
 static const struct inode_operations famfs_file_inode_operations;
 static const struct inode_operations famfs_dir_inode_operations;
 
-struct inode *famfs_get_inode(
+static struct inode *famfs_get_inode(
 	struct super_block *sb,
 	const struct inode *dir,
 	umode_t             mode,
@@ -84,6 +84,109 @@ struct inode *famfs_get_inode(
 	}
 	return inode;
 }
+
+/***************************************************************************
+ * famfs inode_operations: these are currently pretty much boilerplate
+ */
+
+static const struct inode_operations famfs_file_inode_operations = {
+	/* All generic */
+	.setattr	   = simple_setattr,
+	.getattr	   = simple_getattr,
+};
+
+
+/*
+ * File creation. Allocate an inode, and we're done..
+ */
+/* SMP-safe */
+static int
+famfs_mknod(
+	struct mnt_idmap *idmap,
+	struct inode     *dir,
+	struct dentry    *dentry,
+	umode_t           mode,
+	dev_t             dev)
+{
+	struct inode *inode = famfs_get_inode(dir->i_sb, dir, mode, dev);
+	int error           = -ENOSPC;
+
+	if (inode) {
+		struct timespec64       tv;
+
+		d_instantiate(dentry, inode);
+		dget(dentry);	/* Extra count - pin the dentry in core */
+		error = 0;
+		tv = inode_set_ctime_current(inode);
+		inode_set_mtime_to_ts(inode, tv);
+		inode_set_atime_to_ts(inode, tv);
+	}
+	return error;
+}
+
+static int famfs_mkdir(
+	struct mnt_idmap *idmap,
+	struct inode     *dir,
+	struct dentry    *dentry,
+	umode_t           mode)
+{
+	int retval = famfs_mknod(&nop_mnt_idmap, dir, dentry, mode | S_IFDIR, 0);
+
+	if (!retval)
+		inc_nlink(dir);
+
+	return retval;
+}
+
+static int famfs_create(
+	struct mnt_idmap *idmap,
+	struct inode     *dir,
+	struct dentry    *dentry,
+	umode_t           mode,
+	bool              excl)
+{
+	return famfs_mknod(&nop_mnt_idmap, dir, dentry, mode | S_IFREG, 0);
+}
+
+static int famfs_symlink(
+	struct mnt_idmap *idmap,
+	struct inode     *dir,
+	struct dentry    *dentry,
+	const char       *symname)
+{
+	struct inode *inode;
+	int error = -ENOSPC;
+
+	inode = famfs_get_inode(dir->i_sb, dir, S_IFLNK | 0777, 0);
+	if (inode) {
+		int l = strlen(symname)+1;
+
+		error = page_symlink(inode, symname, l);
+		if (!error) {
+			struct timespec64       tv;
+
+			d_instantiate(dentry, inode);
+			dget(dentry);
+			tv = inode_set_ctime_current(inode);
+			inode_set_mtime_to_ts(inode, tv);
+			inode_set_atime_to_ts(inode, tv);
+		} else
+			iput(inode);
+	}
+	return error;
+}
+
+static const struct inode_operations famfs_dir_inode_operations = {
+	.create		= famfs_create,
+	.lookup		= simple_lookup,
+	.link		= simple_link,
+	.unlink		= simple_unlink,
+	.symlink	= famfs_symlink,
+	.mkdir		= famfs_mkdir,
+	.rmdir		= simple_rmdir,
+	.mknod		= famfs_mknod,
+	.rename		= simple_rename,
+};
 
 /**********************************************************************************
  * famfs super_operations
@@ -330,5 +433,35 @@ static int famfs_init_fs_context(struct fs_context *fc)
 	return 0;
 }
 
+static void famfs_kill_sb(struct super_block *sb)
+{
+	struct famfs_fs_info *fsi = sb->s_fs_info;
+
+	mutex_lock(&famfs_context_mutex);
+	list_del(&fsi->fsi_list);
+	mutex_unlock(&famfs_context_mutex);
+
+	mutex_destroy(&fsi->fsi_mutex);
+	if (fsi->bdev_handle)
+		bdev_release(fsi->bdev_handle);
+	if (fsi->dax_devp)
+		fs_put_dax(fsi->dax_devp, fsi);
+	if (fsi->dax_filp) /* This only happens if it's char dax */
+		filp_close(fsi->dax_filp, NULL);
+
+	if (fsi && fsi->rootdev)
+		kfree(fsi->rootdev);
+	kfree(fsi);
+	kill_litter_super(sb);
+}
+
+#define MODULE_NAME "famfs"
+static struct file_system_type famfs_fs_type = {
+	.name		  = MODULE_NAME,
+	.init_fs_context  = famfs_init_fs_context,
+	.parameters	  = famfs_fs_parameters,
+	.kill_sb	  = famfs_kill_sb,
+	.fs_flags	  = FS_USERNS_MOUNT,
+};
 
 MODULE_LICENSE("GPL");
