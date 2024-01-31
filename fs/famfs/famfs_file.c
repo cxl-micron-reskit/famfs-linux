@@ -19,6 +19,231 @@
 #include <uapi/linux/famfs_ioctl.h>
 #include "famfs_internal.h"
 
+/**
+ * famfs_map_meta_alloc() - Allocate famfs file metadata
+ * @mapp:       Pointer to an mcache_map_meta pointer
+ * @ext_count:  The number of extents needed
+ */
+static int
+famfs_meta_alloc(
+	struct famfs_file_meta  **metap,
+	size_t                    ext_count)
+{
+	struct famfs_file_meta *meta;
+	size_t                  metasz;
+
+	*metap = NULL;
+
+	metasz = sizeof(*meta) + sizeof(*(meta->tfs_extents)) * ext_count;
+
+	meta = kzalloc(metasz, GFP_KERNEL);
+	if (!meta)
+		return -ENOMEM;
+
+	meta->tfs_extent_ct = ext_count;
+	*metap = meta;
+
+	return 0;
+}
+
+static void
+famfs_meta_free(
+	struct famfs_file_meta *map)
+{
+	kfree(map);
+}
+
+/**
+ * famfs_file_init_dax() - FAMFSIOC_MAP_CREATE ioctl handler
+ * @file:
+ * @arg:        ptr to struct mcioc_map in user space
+ *
+ * Setup the dax mapping for a file. Files are created empty, and then function is called
+ * (by famfs_file_ioctl()) to setup the mapping and set the file size.
+ */
+static int
+famfs_file_init_dax(
+	struct file    *file,
+	void __user    *arg)
+{
+	struct famfs_extent    *tfs_extents = NULL;
+	struct famfs_file_meta *meta = NULL;
+	struct inode           *inode;
+	struct famfs_ioc_map    imap;
+	struct famfs_fs_info   *fsi;
+	struct super_block     *sb;
+	int    alignment_errs = 0;
+	size_t extent_total = 0;
+	size_t ext_count;
+	int    rc = 0;
+	int    i;
+
+	rc = copy_from_user(&imap, arg, sizeof(imap));
+	if (rc)
+		return -EFAULT;
+
+	ext_count = imap.ext_list_count;
+	if (ext_count < 1) {
+		rc = -ENOSPC;
+		goto errout;
+	}
+
+	if (ext_count > FAMFS_MAX_EXTENTS) {
+		rc = -E2BIG;
+		goto errout;
+	}
+
+	inode = file_inode(file);
+	if (!inode) {
+		rc = -EBADF;
+		goto errout;
+	}
+	sb  = inode->i_sb;
+	fsi = inode->i_sb->s_fs_info;
+
+	tfs_extents = &imap.ext_list[0];
+
+	rc = famfs_meta_alloc(&meta, ext_count);
+	if (rc)
+		goto errout;
+
+	meta->file_type = imap.file_type;
+	meta->file_size = imap.file_size;
+
+	/* Fill in the internal file metadata structure */
+	for (i = 0; i < imap.ext_list_count; i++) {
+		size_t len;
+		off_t  offset;
+
+		offset = imap.ext_list[i].offset;
+		len    = imap.ext_list[i].len;
+
+		extent_total += len;
+
+		if (WARN_ON(offset == 0 && meta->file_type != FAMFS_SUPERBLOCK)) {
+			rc = -EINVAL;
+			goto errout;
+		}
+
+		meta->tfs_extents[i].offset = offset;
+		meta->tfs_extents[i].len    = len;
+
+		/* All extent addresses/offsets must be 2MiB aligned,
+		 * and all but the last length must be a 2MiB multiple.
+		 */
+		if (!IS_ALIGNED(offset, PMD_SIZE)) {
+			pr_err("%s: error ext %d hpa %lx not aligned\n",
+			       __func__, i, offset);
+			alignment_errs++;
+		}
+		if (i < (imap.ext_list_count - 1) && !IS_ALIGNED(len, PMD_SIZE)) {
+			pr_err("%s: error ext %d length %ld not aligned\n",
+			       __func__, i, len);
+			alignment_errs++;
+		}
+	}
+
+	/*
+	 * File size can be <= ext list size, since extent sizes are constrained
+	 * to PMD multiples
+	 */
+	if (imap.file_size > extent_total) {
+		pr_err("%s: file size %lld larger than ext list size %lld\n",
+		       __func__, (u64)imap.file_size, (u64)extent_total);
+		rc = -EINVAL;
+		goto errout;
+	}
+
+	if (alignment_errs > 0) {
+		pr_err("%s: there were %d alignment errors in the extent list\n",
+		       __func__, alignment_errs);
+		rc = -EINVAL;
+		goto errout;
+	}
+
+	/* Publish the famfs metadata on inode->i_private */
+	inode_lock(inode);
+	if (inode->i_private) {
+		rc = -EEXIST; /* file already has famfs metadata */
+	} else {
+		inode->i_private = meta;
+		i_size_write(inode, imap.file_size);
+		inode->i_flags |= S_DAX;
+	}
+	inode_unlock(inode);
+
+ errout:
+	if (rc)
+		famfs_meta_free(meta);
+
+	return rc;
+}
+
+/**
+ * famfs_file_ioctl() -  top-level famfs file ioctl handler
+ * @file:
+ * @cmd:
+ * @arg:
+ */
+static
+long
+famfs_file_ioctl(
+	struct file    *file,
+	unsigned int    cmd,
+	unsigned long   arg)
+{
+	long rc;
+
+	switch (cmd) {
+	case FAMFSIOC_NOP:
+		rc = 0;
+		break;
+
+	case FAMFSIOC_MAP_CREATE:
+		rc = famfs_file_init_dax(file, (void *)arg);
+		break;
+
+	case FAMFSIOC_MAP_GET: {
+		struct inode *inode = file_inode(file);
+		struct famfs_file_meta *meta = inode->i_private;
+		struct famfs_ioc_map umeta;
+
+		memset(&umeta, 0, sizeof(umeta));
+
+		if (meta) {
+			/* TODO: do more to harmonize these structures */
+			umeta.extent_type    = meta->tfs_extent_type;
+			umeta.file_size      = i_size_read(inode);
+			umeta.ext_list_count = meta->tfs_extent_ct;
+
+			rc = copy_to_user((void __user *)arg, &umeta, sizeof(umeta));
+			if (rc)
+				pr_err("%s: copy_to_user returned %ld\n", __func__, rc);
+
+		} else {
+			rc = -EINVAL;
+		}
+	}
+		break;
+	case FAMFSIOC_MAP_GETEXT: {
+		struct inode *inode = file_inode(file);
+		struct famfs_file_meta *meta = inode->i_private;
+
+		if (meta)
+			rc = copy_to_user((void __user *)arg, meta->tfs_extents,
+					  meta->tfs_extent_ct * sizeof(struct famfs_extent));
+		else
+			rc = -EINVAL;
+	}
+		break;
+	default:
+		rc = -ENOTTY;
+		break;
+	}
+
+	return rc;
+}
+
 /*********************************************************************
  * file_operations
  */
@@ -143,6 +368,7 @@ const struct file_operations famfs_file_operations = {
 	/* Custom famfs operations */
 	.write_iter	   = famfs_dax_write_iter,
 	.read_iter	   = famfs_dax_read_iter,
+	.unlocked_ioctl    = famfs_file_ioctl,
 	.mmap		   = famfs_file_mmap,
 
 	/* Force PMD alignment for mmap */
