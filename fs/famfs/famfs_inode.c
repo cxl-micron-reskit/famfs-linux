@@ -41,6 +41,50 @@ static const struct super_operations famfs_ops;
 static const struct inode_operations famfs_file_inode_operations;
 static const struct inode_operations famfs_dir_inode_operations;
 
+struct inode *famfs_get_inode(
+	struct super_block *sb,
+	const struct inode *dir,
+	umode_t             mode,
+	dev_t               dev)
+{
+	struct inode *inode = new_inode(sb);
+
+	if (inode) {
+		struct timespec64       tv;
+
+		inode->i_ino = get_next_ino();
+		inode_init_owner(&nop_mnt_idmap, inode, dir, mode);
+		inode->i_mapping->a_ops = &ram_aops;
+		mapping_set_gfp_mask(inode->i_mapping, GFP_HIGHUSER);
+		mapping_set_unevictable(inode->i_mapping);
+		tv = inode_set_ctime_current(inode);
+		inode_set_mtime_to_ts(inode, tv);
+		inode_set_atime_to_ts(inode, tv);
+
+		switch (mode & S_IFMT) {
+		default:
+			init_special_inode(inode, mode, dev);
+			break;
+		case S_IFREG:
+			inode->i_op = &famfs_file_inode_operations;
+			inode->i_fop = &famfs_file_operations;
+			break;
+		case S_IFDIR:
+			inode->i_op = &famfs_dir_inode_operations;
+			inode->i_fop = &simple_dir_operations;
+
+			/* Directory inodes start off with i_nlink == 2 (for "." entry) */
+			inc_nlink(inode);
+			break;
+		case S_IFLNK:
+			inode->i_op = &page_symlink_inode_operations;
+			inode_nohighmem(inode);
+			break;
+		}
+	}
+	return inode;
+}
+
 /**********************************************************************************
  * famfs super_operations
  *
@@ -150,6 +194,141 @@ famfs_open_device(
 	return 0;
 }
 
+/*****************************************************************************************
+ * fs_context_operations
+ */
+static int
+famfs_fill_super(
+	struct super_block *sb,
+	struct fs_context  *fc)
+{
+	struct famfs_fs_info *fsi = sb->s_fs_info;
+	struct inode *inode;
+	int rc = 0;
+
+	sb->s_maxbytes		= MAX_LFS_FILESIZE;
+	sb->s_blocksize		= PAGE_SIZE;
+	sb->s_blocksize_bits	= PAGE_SHIFT;
+	sb->s_magic		= FAMFS_MAGIC;
+	sb->s_op		= &famfs_ops;
+	sb->s_time_gran		= 1;
+
+	rc = famfs_open_device(sb, fc);
+	if (rc)
+		goto out;
+
+	inode = famfs_get_inode(sb, NULL, S_IFDIR | fsi->mount_opts.mode, 0);
+	sb->s_root = d_make_root(inode);
+	if (!sb->s_root)
+		rc = -ENOMEM;
+
+out:
+	return rc;
+}
+
+enum famfs_param {
+	Opt_mode,
+	Opt_dax,
+};
+
+const struct fs_parameter_spec famfs_fs_parameters[] = {
+	fsparam_u32oct("mode",	  Opt_mode),
+	fsparam_string("dax",     Opt_dax),
+	{}
+};
+
+static int famfs_parse_param(
+	struct fs_context   *fc,
+	struct fs_parameter *param)
+{
+	struct famfs_fs_info *fsi = fc->s_fs_info;
+	struct fs_parse_result result;
+	int opt;
+
+	opt = fs_parse(fc, famfs_fs_parameters, param, &result);
+	if (opt == -ENOPARAM) {
+		opt = vfs_parse_fs_param_source(fc, param);
+		if (opt != -ENOPARAM)
+			return opt;
+
+		return 0;
+	}
+	if (opt < 0)
+		return opt;
+
+	switch (opt) {
+	case Opt_mode:
+		fsi->mount_opts.mode = result.uint_32 & S_IALLUGO;
+		break;
+	case Opt_dax:
+		if (strcmp(param->string, "always"))
+			pr_notice("%s: invalid dax mode %s\n",
+				  __func__, param->string);
+		break;
+	}
+
+	return 0;
+}
+
+static DEFINE_MUTEX(famfs_context_mutex);
+static LIST_HEAD(famfs_context_list);
+
+static int famfs_get_tree(struct fs_context *fc)
+{
+	struct famfs_fs_info *fsi_entry;
+	struct famfs_fs_info *fsi = fc->s_fs_info;
+
+	fsi->rootdev = kstrdup(fc->source, GFP_KERNEL);
+	if (!fsi->rootdev)
+		return -ENOMEM;
+
+	/* Fail if famfs is already mounted from the same device */
+	mutex_lock(&famfs_context_mutex);
+	list_for_each_entry(fsi_entry, &famfs_context_list, fsi_list) {
+		if (strcmp(fsi_entry->rootdev, fc->source) == 0) {
+			mutex_unlock(&famfs_context_mutex);
+			pr_err("%s: already mounted from rootdev %s\n", __func__, fc->source);
+			return -EALREADY;
+		}
+	}
+
+	list_add(&fsi->fsi_list, &famfs_context_list);
+	mutex_unlock(&famfs_context_mutex);
+
+	return get_tree_nodev(fc, famfs_fill_super);
+
+}
+
+static void famfs_free_fc(struct fs_context *fc)
+{
+	struct famfs_fs_info *fsi = fc->s_fs_info;
+
+	if (fsi && fsi->rootdev)
+		kfree(fsi->rootdev);
+
+	kfree(fsi);
+}
+
+static const struct fs_context_operations famfs_context_ops = {
+	.free		= famfs_free_fc,
+	.parse_param	= famfs_parse_param,
+	.get_tree	= famfs_get_tree,
+};
+
+static int famfs_init_fs_context(struct fs_context *fc)
+{
+	struct famfs_fs_info *fsi;
+
+	fsi = kzalloc(sizeof(*fsi), GFP_KERNEL);
+	if (!fsi)
+		return -ENOMEM;
+
+	mutex_init(&fsi->fsi_mutex);
+	fsi->mount_opts.mode = FAMFS_DEFAULT_MODE;
+	fc->s_fs_info        = fsi;
+	fc->ops              = &famfs_context_ops;
+	return 0;
+}
 
 
 MODULE_LICENSE("GPL");
