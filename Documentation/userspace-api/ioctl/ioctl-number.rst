@@ -289,6 +289,7 @@ Code  Seq#    Include File                                           Comments
 'u'   00-1F  linux/smb_fs.h                                          gone
 'u'   20-3F  linux/uvcvideo.h                                        USB video class host driver
 'u'   40-4f  linux/udmabuf.h                                         userspace dma-buf misc device
+'u'   50-5F  linux/famfs_ioctl.h                                     famfs shared memory file system
 'v'   00-1F  linux/ext2_fs.h                                         conflict!
 'v'   00-1F  linux/fs.h                                              conflict!
 'v'   00-0F  linux/sonypi.h                                          conflict!
