@@ -464,4 +464,48 @@ static struct file_system_type famfs_fs_type = {
 	.fs_flags	  = FS_USERNS_MOUNT,
 };
 
+/*****************************************************************************************
+ * Module stuff
+ */
+static struct kobject *famfs_kobj;
+
+static int __init init_famfs_fs(void)
+{
+	int rc;
+
+#if defined(CONFIG_DEV_DAX_IOMAP)
+	pr_notice("%s: Your kernel supports famfs on /dev/dax\n", __func__);
+#else
+	pr_notice("%s: Your kernel does not support famfs on /dev/dax\n", __func__);
+#endif
+	famfs_kobj = kobject_create_and_add(MODULE_NAME, fs_kobj);
+	if (!famfs_kobj) {
+		pr_warn("Failed to create kobject\n");
+		return -ENOMEM;
+	}
+
+	rc = sysfs_create_group(famfs_kobj, &famfs_attr_group);
+	if (rc) {
+		kobject_put(famfs_kobj);
+		pr_warn("%s: Failed to create sysfs group\n", __func__);
+		return rc;
+	}
+
+	return register_filesystem(&famfs_fs_type);
+}
+
+static void
+__exit famfs_exit(void)
+{
+	sysfs_remove_group(famfs_kobj,  &famfs_attr_group);
+	kobject_put(famfs_kobj);
+	unregister_filesystem(&famfs_fs_type);
+	pr_info("%s: unregistered\n", __func__);
+}
+
+
+fs_initcall(init_famfs_fs);
+module_exit(famfs_exit);
+
+MODULE_AUTHOR("John Groves, Micron Technology");
 MODULE_LICENSE("GPL");
