@@ -1236,6 +1236,15 @@ void kill_litter_super(struct super_block *sb)
 }
 EXPORT_SYMBOL(kill_litter_super);
 
+void kill_char_super(struct super_block *sb)
+{
+	if (sb->s_root)
+		d_genocide(sb->s_root);
+	generic_shutdown_super(sb);
+	kill_super_notify(sb);
+}
+EXPORT_SYMBOL(kill_char_super);
+
 int set_anon_super_fc(struct super_block *sb, struct fs_context *fc)
 {
 	return set_anon_super(sb, NULL);
@@ -1319,6 +1328,11 @@ static int super_s_dev_set(struct super_block *s, struct fs_context *fc)
 
 static int super_s_dev_test(struct super_block *s, struct fs_context *fc)
 {
+	u64 devno = (u64)fc->sget_key;
+
+	if ((s->s_dev == (dev_t)devno) && (s->s_iflags & SB_I_RETIRED))
+		pr_notice("%s: found retired superblock match\n", __func__);
+
 	return !(s->s_iflags & SB_I_RETIRED) &&
 		s->s_dev == *(dev_t *)fc->sget_key;
 }
