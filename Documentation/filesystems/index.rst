@@ -89,7 +89,10 @@ Documentation for filesystem implementations.
    ext3
    ext4/index
    f2fs
-   gfs2/index
+   famfs
+   gfs2
+   gfs2-uevents
+   gfs2-glocks
    hfs
    hfsplus
    hpfs
