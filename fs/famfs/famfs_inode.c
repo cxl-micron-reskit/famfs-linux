@@ -95,14 +95,18 @@ static const struct inode_operations famfs_file_inode_operations = {
 /*
  * File creation. Allocate an inode, and we're done..
  */
-/* SMP-safe */
 static int
 famfs_mknod(struct mnt_idmap *idmap, struct inode *dir, struct dentry *dentry,
 	    umode_t mode, dev_t dev)
 {
-	struct inode *inode = famfs_get_inode(dir->i_sb, dir, mode, dev);
-	struct timespec64       tv;
+	struct famfs_fs_info *fsi = dir->i_sb->s_fs_info;
+	struct timespec64 tv;
+	struct inode *inode;
 
+	if (fsi->error)
+		return -ENODEV;
+
+	inode = famfs_get_inode(dir->i_sb, dir, mode, dev);
 	if (!inode)
 		return -ENOSPC;
 
@@ -118,9 +122,13 @@ famfs_mknod(struct mnt_idmap *idmap, struct inode *dir, struct dentry *dentry,
 static int famfs_mkdir(struct mnt_idmap *idmap, struct inode *dir,
 		       struct dentry *dentry, umode_t mode)
 {
-	int rc = famfs_mknod(&nop_mnt_idmap, dir, dentry,
-				 mode | S_IFDIR, 0);
+	struct famfs_fs_info *fsi = dir->i_sb->s_fs_info;
+	int rc;
 
+	if (fsi->error)
+		return -ENODEV;
+
+	rc = famfs_mknod(&nop_mnt_idmap, dir, dentry, mode | S_IFDIR, 0);
 	if (rc)
 		return rc;
 
@@ -132,6 +140,11 @@ static int famfs_mkdir(struct mnt_idmap *idmap, struct inode *dir,
 static int famfs_create(struct mnt_idmap *idmap, struct inode *dir,
 			struct dentry *dentry, 	umode_t mode, bool excl)
 {
+	struct famfs_fs_info *fsi = dir->i_sb->s_fs_info;
+
+	if (fsi->error)
+		return -ENODEV;
+
 	return famfs_mknod(&nop_mnt_idmap, dir, dentry, mode | S_IFREG, 0);
 }
 

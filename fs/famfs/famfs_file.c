@@ -69,6 +69,17 @@ famfs_file_init_dax(struct file *file, void __user *arg)
 	int rc;
 	int i;
 
+	inode = file_inode(file);
+	if (!inode) {
+		rc = -EBADF;
+		goto errout;
+	}
+
+	sb  = inode->i_sb;
+	fsi = sb->s_fs_info;
+	if (fsi->error)
+		return -ENODEV;
+
 	rc = copy_from_user(&imap, arg, sizeof(imap));
 	if (rc)
 		return -EFAULT;
@@ -83,14 +94,6 @@ famfs_file_init_dax(struct file *file, void __user *arg)
 		rc = -E2BIG;
 		goto errout;
 	}
-
-	inode = file_inode(file);
-	if (!inode) {
-		rc = -EBADF;
-		goto errout;
-	}
-	sb  = inode->i_sb;
-	fsi = inode->i_sb->s_fs_info;
 
 	tfs_extents = &imap.ext_list[0];
 
@@ -179,7 +182,12 @@ famfs_file_init_dax(struct file *file, void __user *arg)
 static long
 famfs_file_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 {
+	struct inode *inode = file_inode(file);
+	struct famfs_fs_info *fsi = inode->i_sb->s_fs_info;
 	long rc;
+
+	if (fsi->error && (cmd != FAMFSIOC_NOP))
+		return -ENODEV;
 
 	switch (cmd) {
 	case FAMFSIOC_NOP:
@@ -269,6 +277,9 @@ famfs_meta_to_dax_offset(struct inode *inode, struct iomap *iomap,
 	loff_t local_offset = offset;
 	struct famfs_fs_info  *fsi = inode->i_sb->s_fs_info;
 
+	if (fsi->error)
+		goto err_out;
+
 	iomap->offset = offset; /* file offset */
 
 	for (i = 0; i < meta->tfs_extent_ct; i++) {
@@ -311,6 +322,7 @@ famfs_meta_to_dax_offset(struct inode *inode, struct iomap *iomap,
 		local_offset -= dax_ext_len; /* Get ready for the next extent */
 	}
 
+ err_out:
 	/* We fell out the end of the extent list.
 	 * Set iomap to zero length in this case, and return 0
 	 * This just means that the r/w is past EOF
