@@ -240,19 +240,19 @@ lookup_daxdev(const char *pathname, dev_t *devno)
 		return err;
 
 	inode = d_backing_inode(path.dentry);
-	err = -EINVAL;
-	if (!S_ISCHR(inode->i_mode))
+	if (!S_ISCHR(inode->i_mode)) {
+		err = -EINVAL;
 		goto out_path_put;
-	err = -EACCES;
-	if (!may_open_dev(&path)) /* had to export this */
+	}
+
+	if (!may_open_dev(&path)) { /* had to export this */
+		err = -EACCES;
 		goto out_path_put;
+	}
 
 	 /* if it's dax, i_rdev is struct dax_device */
 	*devno = inode->i_rdev;
 
-	pr_info("%s: devno %llx inode %llx\n", __func__,
-		(u64)inode->i_rdev, (u64)inode);
-	err = 0;
 out_path_put:
 	path_put(&path);
 	return err;
