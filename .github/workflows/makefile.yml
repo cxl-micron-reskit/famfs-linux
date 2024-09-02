@@ -17,14 +17,14 @@ jobs:
     - name: echo
       run: echo "hello, world"
 
+    - name: frob
+      run: cat /etc/apt/sources.list
+
     - name: sources.list 1
       run: sudo 'echo "deb-src http://archive.ubuntu.com/ubuntu disco main" >> /etc/apt/sources.list'
 
     - name: sources.list 2
       run: sudo "echo 'deb-src http://archive.ubuntu.com/ubuntu disco-updates main' >> /etc/apt/sources.list"
-
-    - name: frob
-      run: cat /etc/apt/sources.list
 
     - name: Install dependencies 1
       run: sudo apt build-dep linux linux-image-unsigned-$(uname -r)
