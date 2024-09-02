@@ -1,0 +1,39 @@
+name: Makefile CI
+
+on:
+  push:
+    branches: [ "famfs-v2" ]
+  pull_request:
+    branches: [ "famfs-v2" ]
+
+jobs:
+  build:
+
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: echo
+      run: echo "hello, world"
+
+    - name: frob
+      run: cat /etc/apt/sources.list
+
+    - name: sources.list 1
+      run: sudo 'echo "deb-src http://archive.ubuntu.com/ubuntu disco main" >> /etc/apt/sources.list'
+
+    - name: sources.list 2
+      run: sudo "echo 'deb-src http://archive.ubuntu.com/ubuntu disco-updates main' >> /etc/apt/sources.list"
+
+    - name: Install dependencies 1
+      run: sudo apt build-dep linux linux-image-unsigned-$(uname -r)
+
+    - name: Install dependencies 2
+      run: sudo apt install libncurses-dev gawk flex bison openssl libssl-dev dkms libelf-dev libudev-dev libpci-dev libiberty-dev autoconf llvm
+
+    - name: install .config file
+      run: sudo cp ${GITHUB_WORKSPACE}/famfs-v1.2-config ${GITHUB_WORKSPACE}/.config
+
+    - name: Build
+      run: make -j
