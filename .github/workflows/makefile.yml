@@ -18,7 +18,7 @@ jobs:
       run: echo "hello, world"
 
     - name: sources.list 1
-      run: sudo "echo 'deb-src http://archive.ubuntu.com/ubuntu disco main' >> /etc/apt/sources.list"
+      run: sudo 'echo "deb-src http://archive.ubuntu.com/ubuntu disco main" >> /etc/apt/sources.list'
 
     - name: sources.list 2
       run: sudo "echo 'deb-src http://archive.ubuntu.com/ubuntu disco-updates main' >> /etc/apt/sources.list"
