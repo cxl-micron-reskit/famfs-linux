@@ -13,18 +13,15 @@ jobs:
 
     steps:
     - uses: actions/checkout@v4
-
-    - name: configure
-      run: ./configure
-
+    
     - name: Install dependencies 1
       run: sudo apt build-dep linux linux-image-unsigned-$(uname -r)
 
     - name: Install dependencies 2
       run: sudo apt install libncurses-dev gawk flex bison openssl libssl-dev dkms libelf-dev libudev-dev libpci-dev libiberty-dev autoconf llvm
 
-    - name: Run check
-      run: make check
+    - name: install .config file
+      run: sudo cp ${GITHUB_WORKSPACE}/famfs-config ${GITHUB_WORKSPACE}/.config
 
-    - name: Run distcheck
-      run: make distcheck
+    - name: Build
+      run: make -j
