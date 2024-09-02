@@ -13,7 +13,10 @@ jobs:
 
     steps:
     - uses: actions/checkout@v4
-    
+
+    - name: frob
+      run: cat /etc/apt/sources.list
+
     - name: Install dependencies 1
       run: sudo apt build-dep linux linux-image-unsigned-$(uname -r)
 
