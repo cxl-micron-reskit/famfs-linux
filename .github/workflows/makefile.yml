@@ -1,0 +1,30 @@
+name: Makefile CI
+
+on:
+  push:
+    branches: [ "famfs-v2" ]
+  pull_request:
+    branches: [ "famfs-v2" ]
+
+jobs:
+  build:
+
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: configure
+      run: ./configure
+
+    - name: Install dependencies 1
+      run: sudo apt build-dep linux linux-image-unsigned-$(uname -r)
+
+    - name: Install dependencies 2
+      run: sudo apt install libncurses-dev gawk flex bison openssl libssl-dev dkms libelf-dev libudev-dev libpci-dev libiberty-dev autoconf llvm
+
+    - name: Run check
+      run: make check
+
+    - name: Run distcheck
+      run: make distcheck
