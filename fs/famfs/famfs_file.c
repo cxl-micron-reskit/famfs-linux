@@ -358,7 +358,7 @@ famfs_meta_alloc_v2(
 
 	case INTERLEAVED_EXTENT: {
 		struct famfs_ioc_interleaved_ext
-			tmp_ie[FAMFS_IOC_MAX_INTERLEAVED_EXTENTS];
+			tmp_ie[FAMFS_IOC_MAX_INTERLEAVED_EXTENTS] = { 0 };
 		struct famfs_ioc_simple_extent tmp_ext_list[FAMFS_MAX_STRIPS];
 		s64 size_remainder = meta->file_size;
 		int niext = fmap->fioc_niext;
