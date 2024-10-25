@@ -69,6 +69,8 @@ enum famfs_file_type {
  *
  * * Data is laid out across chunks in chunk # order
  * * Columns are strips
+ * * Strips are contiguous devdax extents, likely each coming from a different
+ *   memory device
  * * Rows are stripes
  * * The number of chunks is (int)((file_size + chunk_size - 1) / chunk_size)
  *   (and obviously the last chunk could be partial)
@@ -78,7 +80,7 @@ enum famfs_file_type {
  * * stripe_num(offset) = offset / stripe_size
  * * ...You get the idea - see the code for more details...
  *
- * Some concrete examples:
+ * Some concrete examples from the layout above:
  * * Offset 0 in the file is offset 0 in chunk 0, which is offset 0 in strip 0
  * * offset 4MiB in the file is offset 0 in chunk 2, which is offset 0 in
  *   strip 2
