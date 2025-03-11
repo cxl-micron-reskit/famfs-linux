@@ -275,7 +275,7 @@ famfs_get_tree(struct fs_context *fc)
 	}
 
 	if (sb->s_root) {
-		pr_info("%s: found a matching suerblock for %s\n",
+		pr_info("%s: found a matching superblock for %s\n",
 			__func__, fc->source);
 
 		/* We don't expect to find a match by dev_t; if we do, it must
